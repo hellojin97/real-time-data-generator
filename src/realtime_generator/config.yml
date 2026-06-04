@@ -1,0 +1,33 @@
+# 실시간 생성기 기본 설정 (CLI 선택 인자의 기본값)
+# CLI 옵션을 주면 아래 값보다 우선한다.
+
+seed: 42
+
+# 차원 풀 규모 (시작 시 메모리에 생성)
+dimensions:
+  users: 5000
+  products: 1000
+
+# 트래픽 모델
+traffic:
+  # 하루 평균 세션 도착률(초당). 실제 발생률은 시간대 가중치로 변동한다.
+  # 한 세션은 평균 4~5개 이벤트를 만들므로 events/sec ≈ sessions_per_sec * 4.5
+  sessions_per_sec: 2.0
+
+# 퍼널 / 전환
+funnel:
+  conversion_rate: 0.04   # 전체 세션 중 구매까지 가는 비율(현실치 2~5%)
+
+# 더티 데이터 주입 (실전 느낌)
+dirty_data:
+  null_rate_search: 0.10  # search 이벤트의 search_query NULL 비율
+
+# 출력 싱크
+sink:
+  type: stdout            # stdout | file | kafka
+  file:
+    out_dir: ./output/stream
+    rows_per_file: 10000  # 파일당 최대 레코드 수(롤링)
+  kafka:
+    bootstrap_servers: localhost:9092
+    topic_prefix: ecom    # 토픽명 = "{prefix}.{stream}"  예) ecom.events
