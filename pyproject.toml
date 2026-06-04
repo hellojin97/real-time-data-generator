@@ -1,0 +1,51 @@
+[project]
+name = "realtime-generator"
+version = "0.1.0"
+description = "실시간 이커머스 이벤트 스트림 생성기 (플러그인형 싱크: stdout/file/kafka)"
+readme = "README.md"
+authors = [
+    { name = "hellojin97", email = "ilhj1228@gmail.com" }
+]
+requires-python = ">=3.12,<3.13"
+# 런타임 의존성: 수치 샘플링(numpy)과 설정 로드(pyyaml)만으로 코어가 돈다.
+# Kafka/Parquet 등 외부 연동은 optional extras 로 분리해 단독 실행을 가볍게 유지.
+dependencies = [
+    "numpy>=1.26",
+    "pyyaml>=6.0.3",
+]
+
+[project.optional-dependencies]
+# Kafka 싱크 사용 시:  uv sync --extra kafka
+kafka = ["confluent-kafka>=2.4"]
+# 배치 산출물(parquet) 차원 로드 시:  uv sync --extra parquet
+parquet = ["polars>=1.40.1"]
+
+[project.scripts]
+# 콘솔 스크립트 진입점
+stream-data = "realtime_generator.main:main"
+
+# 로컬 개발 전용 (런타임 의존성에는 포함되지 않음)
+[dependency-groups]
+dev = [
+    "ruff>=0.15",
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.7.19,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E/F: pyflakes+pycodestyle, I: import 정렬, UP: pyupgrade, B: bugbear
+select = ["E", "F", "I", "UP", "B"]
+# E501(라인 길이)은 데이터 풀 정의(긴 리스트)가 많아 완화
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
