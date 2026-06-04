@@ -5,6 +5,7 @@ from datetime import datetime
 
 from realtime_generator import dimensions
 from realtime_generator.base import make_rng
+from realtime_generator.records import _amount_local
 from realtime_generator.sessions import PURCHASE_FUNNEL, plan_session
 
 START = datetime(2025, 1, 1, 20, 0, 0)  # 저녁 피크
@@ -43,7 +44,7 @@ def test_order_amount_matches_line_items():
     order = next(r.value for r in recs if r.stream == "orders")
     expected = round(sum(i["qty"] * i["unit_price_usd"] for i in order["items"]), 2)
     assert order["amount_usd"] == expected
-    assert order["amount_local"] == round(expected * order["fx_rate"], 2)
+    assert order["amount_local"] == _amount_local(expected, order["currency"])
 
 
 def test_browse_session_has_only_events():

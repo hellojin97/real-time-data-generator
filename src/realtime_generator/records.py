@@ -10,10 +10,18 @@ from datetime import datetime
 
 # USD 기준 환율(현지통화 = USD × rate). 학습용 근사치.
 FX_RATE = {"USD": 1.0, "KRW": 1350.0, "JPY": 150.0, "GBP": 0.79, "EUR": 0.92}
+# 소수 단위가 없는 통화(원/엔). 현지금액은 정수로 반올림한다.
+ZERO_DECIMAL_CURRENCIES = {"KRW", "JPY"}
 
 
 def _iso(ts: datetime) -> str:
     return ts.isoformat(timespec="seconds")
+
+
+def _amount_local(amount_usd: float, currency: str) -> float:
+    """USD 금액을 현지통화로 환산. 소수 단위 없는 통화는 정수로 반올림."""
+    local = amount_usd * FX_RATE.get(currency, 1.0)
+    return round(local) if currency in ZERO_DECIMAL_CURRENCIES else round(local, 2)
 
 
 def build_event(
@@ -51,7 +59,6 @@ def build_order(
 ) -> dict:
     """주문 1건. items = [{product_id, qty, unit_price_usd}, ...]."""
     amount_usd = round(sum(i["qty"] * i["unit_price_usd"] for i in items), 2)
-    fx = FX_RATE.get(currency, 1.0)
     return {
         "order_id": order_id,
         "user_id": user_id,
@@ -60,8 +67,8 @@ def build_order(
         "status": "created",
         "currency": currency,
         "amount_usd": amount_usd,
-        "amount_local": round(amount_usd * fx, 2),
-        "fx_rate": fx,
+        "amount_local": _amount_local(amount_usd, currency),
+        "fx_rate": FX_RATE.get(currency, 1.0),
         "items": items,
     }
 
@@ -77,7 +84,6 @@ def build_payment(
     currency: str,
 ) -> dict:
     """결제 1건. status = approved | failed | refunded."""
-    fx = FX_RATE.get(currency, 1.0)
     return {
         "payment_id": payment_id,
         "order_id": order_id,
@@ -86,5 +92,5 @@ def build_payment(
         "status": status,
         "amount_usd": amount_usd,
         "currency": currency,
-        "amount_local": round(amount_usd * fx, 2),
+        "amount_local": _amount_local(amount_usd, currency),
     }

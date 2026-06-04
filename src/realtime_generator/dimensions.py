@@ -77,6 +77,7 @@ class DimensionPool:
 def _finalize(
     user_ids, user_segment, user_country, user_currency,
     product_ids, product_price, product_category, product_active,
+    rng: np.random.Generator,
 ) -> DimensionPool:
     """원시 배열로부터 추출 가중치를 계산해 DimensionPool 을 조립."""
     activity = np.array([SEGMENT_ACTIVITY[s] for s in user_segment], dtype=float)
@@ -84,8 +85,11 @@ def _finalize(
 
     active_idx = np.flatnonzero(product_active)
     # 인기 가중치: 활성 상품에 멱법칙(power-law)풍 분포를 부여해 일부 '핫템'을 만든다.
+    # 멱법칙 질량을 '무작위' 상품에 붙인다 — 그러지 않으면 항상 가장 작은 product_id 가
+    # 베스트셀러가 되는 비현실적 인공물이 생긴다(인기 ↔ product_id 상관 제거).
     rank = np.arange(1, len(active_idx) + 1, dtype=float)
     pop = 1.0 / rank
+    pop = pop[rng.permutation(len(active_idx))]
     active_weights = pop / pop.sum()
 
     return DimensionPool(
@@ -128,14 +132,19 @@ def generate(n_users: int, n_products: int, seed: int, discontinued_rate: float 
     return _finalize(
         user_ids, user_segment, user_country, user_currency,
         product_ids, product_price, product_category, product_active,
+        rng,
     )
 
 
-def load_parquet(path: str | Path) -> DimensionPool:
+def load_parquet(path: str | Path, seed: int = 0) -> DimensionPool:
     """배치 산출물(users.parquet / products.parquet)에서 풀을 로드한다.
 
     `polars` extra 가 필요하다:  uv sync --extra parquet
     `path`는 users.parquet/products.parquet 가 들어있는 디렉토리.
+    컬럼명은 형제 프로젝트(ecommerce-data-generator) 스키마를 따른다:
+      users    : user_id, segment, country, ...
+      products : product_id, base_price, category_id, is_active, ...
+    seed 는 인기 가중치 셔플에만 쓰인다(데이터 자체는 parquet 에서 그대로 온다).
     """
     try:
         import polars as pl
@@ -154,13 +163,14 @@ def load_parquet(path: str | Path) -> DimensionPool:
     user_currency = np.array([COUNTRY_CURRENCY.get(c, "USD") for c in user_country], dtype=object)
 
     product_ids = products["product_id"].to_numpy().astype(np.int64)
-    product_price = products["price"].to_numpy().astype(float)
+    product_price = products["base_price"].to_numpy().astype(float)
     product_category = products["category_id"].to_numpy().astype(object)
-    product_active = ~products["is_discontinued"].to_numpy().astype(bool)
+    product_active = products["is_active"].to_numpy().astype(bool)
     if not product_active.any():
         product_active[0] = True
 
     return _finalize(
         user_ids, user_segment, user_country, user_currency,
         product_ids, product_price, product_category, product_active,
+        make_rng(seed),
     )
