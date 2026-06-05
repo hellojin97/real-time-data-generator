@@ -25,6 +25,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read   # Slack 스레드에 머지된 PR 내용을 싣기 위해 PR 조회
 
 jobs:
   kafka-roundtrip:
@@ -90,37 +91,94 @@ jobs:
         if: always()
         run: docker compose down -v
 
-      - name: Notify Slack (result)
+      - name: Build Slack messages
         if: always()
         env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
           JOB_STATUS: ${{ job.status }}
           REPO: ${{ github.repository }}
           REF: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+          CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          PR_NUMBER_EVENT: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # 시크릿 미설정이면 조용히 건너뛴다(포크 PR 등). 알림 실패가 빌드를 깨지 않도록 비치명적.
-          if [ -z "$SLACK_BOT_TOKEN" ] || [ -z "$SLACK_CHANNEL_ID" ]; then
-            echo "SLACK_BOT_TOKEN/SLACK_CHANNEL_ID 미설정 — Slack 알림 건너뜀"
+          NL=$'\n'
+          case "$JOB_STATUS" in
+            success)   TITLE="✅ kafka-it 통과 (produce→consume 검증)"; COLOR="#2ecc71" ;;
+            failure)   TITLE="🔴 kafka-it 실패"; COLOR="#e74c3c" ;;
+            cancelled) TITLE="⚪ kafka-it 취소됨"; COLOR="#95a5a6" ;;
+            *)         TITLE="❓ kafka-it - unknown status"; COLOR="#7f8c8d" ;;
+          esac
+
+          # 레포명을 맨 위에 넣어 출처 구분(토큰을 여러 repo가 공유해도 OK)
+          HEAD="*${REPO}*${NL}${TITLE}"
+          TEXT="*검증*: 실브로커 Kafka produce→consume 충실도${NL}<${RUN_URL}|▶ Job 로그>"
+          CTX="브랜치 \`${REF}\` · 실행자 ${ACTOR} · run #${RUN_NUMBER} · \`${COMMIT_SHA:0:7}\`"
+
+          # 메인 메시지(chat.postMessage용; channel 포함)
+          jq -n --arg ch "$CHANNEL_ID" --arg color "$COLOR" --arg head "$HEAD" \
+                --arg text "$TEXT" --arg ctx "$CTX" --arg fb "$TITLE" \
+            '{channel:$ch, text:$fb, attachments:[{color:$color,blocks:[
+               {type:"section",text:{type:"mrkdwn",text:$head}},
+               {type:"section",text:{type:"mrkdwn",text:$text}},
+               {type:"context",elements:[{type:"mrkdwn",text:$ctx}]}
+             ]}]}' > slack_main.json
+
+          # 스레드 본문: PR(이벤트 또는 머지 커밋)이면 PR 제목/본문, 아니면 커밋 메시지
+          PR_NUMBER="$PR_NUMBER_EVENT"
+          if [ -z "$PR_NUMBER" ] && [ -n "$COMMIT_MSG" ]; then
+            PR_NUMBER=$(printf '%s' "$COMMIT_MSG" | grep -oE 'Merge pull request #[0-9]+' | grep -oE '[0-9]+' | head -1 || true)
+          fi
+          if [ -n "$PR_NUMBER" ]; then
+            PR_JSON=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}" || echo '{}')
+            PR_TITLE=$(printf '%s' "$PR_JSON" | jq -r '.title // ""')
+            PR_BODY=$(printf '%s' "$PR_JSON" | jq -r '.body // ""')
+            THREAD_HEAD="📦 *PR* <${SERVER_URL}/${REPO}/pull/${PR_NUMBER}|#${PR_NUMBER}: ${PR_TITLE}>"
+            THREAD_BODY="$PR_BODY"
+            [ -z "$THREAD_BODY" ] && THREAD_BODY="(PR 본문 없음)"
+          else
+            THREAD_HEAD="📝 *커밋* \`${COMMIT_SHA:0:7}\` by ${ACTOR}"
+            THREAD_BODY="$COMMIT_MSG"
+            [ -z "$THREAD_BODY" ] && THREAD_BODY="(커밋 메시지 없음 — 수동 실행)"
+          fi
+
+          # 본문은 jq에서 UTF-8 안전하게 1800자로 절단
+          jq -n --arg ch "$CHANNEL_ID" --arg head "$THREAD_HEAD" --arg body "$THREAD_BODY" \
+            '{channel:$ch, text: ($head + "\n\n" + (if ($body|length) > 1800 then ($body[0:1800] + "…") else $body end))}' \
+            > slack_thread_body.json
+
+      - name: Post Slack (main + thread reply)
+        if: always()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          if [ -z "$SLACK_BOT_TOKEN" ]; then
+            echo "SLACK_BOT_TOKEN 미설정 — Slack 알림을 건너뜁니다."
             exit 0
           fi
-          if [ "$JOB_STATUS" = "success" ]; then EMOJI="✅"; COLOR="#36a64f"; else EMOJI="❌"; COLOR="#e01e5a"; fi
-          TEXT="$EMOJI kafka-it *$JOB_STATUS* — \`$REPO\`@\`${SHA:0:7}\` ($REF)"
-          PAYLOAD=$(jq -n \
-            --arg ch "$SLACK_CHANNEL_ID" --arg color "$COLOR" --arg text "$TEXT" --arg url "$RUN_URL" \
-            '{channel:$ch, text:$text, attachments:[{color:$color, blocks:[
-               {type:"section", text:{type:"mrkdwn", text:$text}},
-               {type:"context", elements:[{type:"mrkdwn", text:("<"+$url+"|▶ run logs>")}]}
-             ]}]}')
-          RESP=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
-            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-            -H "Content-Type: application/json; charset=utf-8" \
-            --data "$PAYLOAD")
-          if echo "$RESP" | jq -e '.ok' >/dev/null; then
-            echo "Slack 알림 완료"
-          else
-            # 비치명적: 토큰/채널 문제는 경고로만 남기고 빌드는 유지
-            echo "::warning::Slack 전송 실패: $(echo "$RESP" | jq -r '.error // .')"
+          api() {
+            curl -sS -X POST https://slack.com/api/chat.postMessage \
+              -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+              -H "Content-Type: application/json; charset=utf-8" \
+              --data @"$1"
+          }
+          # 1) 메인 상태 메시지 → ts 획득
+          RESP=$(api slack_main.json)
+          if [ "$(printf '%s' "$RESP" | jq -r '.ok')" != "true" ]; then
+            echo "Slack 메인 메시지 실패: $RESP"; exit 1
           fi
+          TS=$(printf '%s' "$RESP" | jq -r '.ts')
+          echo "메인 메시지 ts=$TS"
+          # 2) 그 ts 스레드에 PR/커밋 내용을 답글로
+          jq --arg ts "$TS" '. + {thread_ts:$ts}' slack_thread_body.json > slack_thread.json
+          RESP2=$(api slack_thread.json)
+          if [ "$(printf '%s' "$RESP2" | jq -r '.ok')" != "true" ]; then
+            echo "Slack 스레드 답글 실패: $RESP2"; exit 1
+          fi
+          echo "Slack 알림 완료 (스레드 댓글 포함)"
