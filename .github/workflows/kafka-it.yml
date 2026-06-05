@@ -1,6 +1,7 @@
 name: kafka-it
 # 실브로커 통합 테스트: docker compose 로 Kafka 를 띄우고, 생성기가 produce 한
 # 이벤트를 consumer 로 다시 받아 검증한다(produce -> consume 왕복).
+# 또한 demo 스텝에서 실제 중개 데이터(토픽별 건수 + 레코드 샘플)를 로그로 보여준다.
 # workflow_dispatch 로 수동 실행 가능(Actions 탭 또는 API).
 on:
   workflow_dispatch: {}
@@ -52,11 +53,34 @@ jobs:
           docker compose logs kafka
           exit 1
 
-      - name: Integration test (produce -> consume roundtrip)
+      - name: Demo — produce via generator, then read back from broker (visible)
+        run: |
+          echo "================ PRODUCE: generator -> Kafka ================"
+          uv run stream-data --sink kafka --simulated --seed 7 \
+            --max-events 1500 --conversion-rate 0.3
+          echo
+          echo "================ TOPIC MESSAGE COUNTS (broker) ============="
+          for t in ecom.events ecom.orders ecom.payments; do
+            n=$(docker compose exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh \
+                  --bootstrap-server localhost:9092 --topic "$t" 2>/dev/null \
+                  | awk -F: '{s+=$3} END{print s+0}')
+            printf "  %-13s %s messages\n" "$t" "$n"
+          done
+          echo
+          for t in ecom.events ecom.orders ecom.payments; do
+            echo "================ SAMPLE FROM $t  (key | value) ============"
+            docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh \
+              --bootstrap-server localhost:9092 --topic "$t" --from-beginning \
+              --property print.key=true --property key.separator='  |  ' \
+              --max-messages 3 --timeout-ms 10000 || true
+            echo
+          done
+
+      - name: Integration test (produce -> consume roundtrip + fidelity)
         env:
           RUN_KAFKA_IT: "1"
           KAFKA_BOOTSTRAP: localhost:9092
-        run: uv run pytest tests/integration -q
+        run: uv run pytest tests/integration -v
 
       - name: Kafka logs (on failure)
         if: failure()
