@@ -89,3 +89,38 @@ jobs:
       - name: Teardown
         if: always()
         run: docker compose down -v
+
+      - name: Notify Slack (result)
+        if: always()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          JOB_STATUS: ${{ job.status }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # 시크릿 미설정이면 조용히 건너뛴다(포크 PR 등). 알림 실패가 빌드를 깨지 않도록 비치명적.
+          if [ -z "$SLACK_BOT_TOKEN" ] || [ -z "$SLACK_CHANNEL_ID" ]; then
+            echo "SLACK_BOT_TOKEN/SLACK_CHANNEL_ID 미설정 — Slack 알림 건너뜀"
+            exit 0
+          fi
+          if [ "$JOB_STATUS" = "success" ]; then EMOJI="✅"; COLOR="#36a64f"; else EMOJI="❌"; COLOR="#e01e5a"; fi
+          TEXT="$EMOJI kafka-it *$JOB_STATUS* — \`$REPO\`@\`${SHA:0:7}\` ($REF)"
+          PAYLOAD=$(jq -n \
+            --arg ch "$SLACK_CHANNEL_ID" --arg color "$COLOR" --arg text "$TEXT" --arg url "$RUN_URL" \
+            '{channel:$ch, text:$text, attachments:[{color:$color, blocks:[
+               {type:"section", text:{type:"mrkdwn", text:$text}},
+               {type:"context", elements:[{type:"mrkdwn", text:("<"+$url+"|▶ run logs>")}]}
+             ]}]}')
+          RESP=$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "$PAYLOAD")
+          if echo "$RESP" | jq -e '.ok' >/dev/null; then
+            echo "Slack 알림 완료"
+          else
+            # 비치명적: 토큰/채널 문제는 경고로만 남기고 빌드는 유지
+            echo "::warning::Slack 전송 실패: $(echo "$RESP" | jq -r '.error // .')"
+          fi
