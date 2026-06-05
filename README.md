@@ -109,6 +109,33 @@ uv run stream-data --duration 60 --sessions-per-sec 5 --sink file --out-dir ./ou
 uv run stream-data --dim-parquet /path/to/raw --max-events 1000
 ```
 
+### 5. Kafka로 스트리밍 (로컬 브로커)
+
+`docker-compose.yml`로 단일노드 Kafka(KRaft, Zookeeper 불필요)를 띄우고 스트림을 produce합니다. 논리 스트림이 토픽이 됩니다: `ecom.events` / `ecom.orders` / `ecom.payments` (key=user_id/order_id로 파티셔닝).
+
+```bash
+uv sync --extra kafka                 # confluent-kafka 설치
+docker compose up -d                  # 브로커 기동
+
+# 30초간 Kafka로 흘려보내기
+uv run stream-data --sink kafka --duration 30 --sessions-per-sec 5
+
+# 토픽 소비해 확인
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic ecom.events --from-beginning
+
+docker compose down -v                # 정리
+```
+
+브로커 주소/토픽 프리픽스는 `config.yml`의 `sink.kafka`에서 바꿀 수 있습니다.
+
+실브로커 왕복 통합 테스트(기본 스킵):
+
+```bash
+docker compose up -d
+RUN_KAFKA_IT=1 uv run pytest tests/integration -q
+```
+
 ### 주요 옵션
 
 | 옵션 | 설명 |
@@ -145,8 +172,8 @@ uv run ruff check .   # 코드 스타일 점검
 
 ## 로드맵
 
-- [x] 코어 엔진 + stdout/file 싱크 + 테스트 (현재)
-- [ ] Kafka 싱크 실연 + `docker-compose.yml`(로컬 브로커)
+- [x] 코어 엔진 + stdout/file 싱크 + 테스트
+- [x] Kafka 싱크 실연 + `docker-compose.yml`(로컬 브로커)
+- [ ] Spark Structured Streaming 소비 예제 (윈도우 집계)
 - [ ] late/out-of-order 이벤트 주입 옵션
 - [ ] 트래픽 스파이크(플래시세일) 시나리오 주입
-- [ ] Spark Structured Streaming 소비 예제

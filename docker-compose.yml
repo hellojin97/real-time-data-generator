@@ -1,0 +1,27 @@
+# 로컬 학습용 단일노드 Kafka (KRaft 모드 — Zookeeper 불필요).
+#
+#   docker compose up -d          # 브로커 기동
+#   uv run stream-data --sink kafka --duration 30 --sessions-per-sec 5
+#   docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+#       --bootstrap-server localhost:9092 --topic ecom.events --from-beginning
+#   docker compose down -v        # 정리
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: rtdg-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # 토픽 자동생성: 싱크가 produce 하면 ecom.events/orders/payments 가 자동 생성됨
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
