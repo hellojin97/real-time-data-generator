@@ -1,0 +1,38 @@
+name: ci
+# 가벼운 게이트: ruff 린트 + 단위 테스트. 실브로커가 필요한 통합 테스트는
+# RUN_KAFKA_IT 미설정으로 자동 스킵되고, 그쪽은 별도 kafka-it 워크플로우가 담당한다.
+on:
+  pull_request:
+    paths:
+      - src/**
+      - tests/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/ci.yml
+  push:
+    branches: [ main ]
+    paths:
+      - src/**
+      - tests/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - name: Install deps (runtime + dev + parquet extra)
+        # parquet extra 포함: load_parquet 회귀 테스트까지 실제 실행(스킵 방지)
+        run: uv sync --dev --extra parquet
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Pytest (unit; integration auto-skips without RUN_KAFKA_IT)
+        run: uv run pytest
