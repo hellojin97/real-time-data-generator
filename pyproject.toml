@@ -19,10 +19,15 @@ dependencies = [
 kafka = ["confluent-kafka>=2.4"]
 # 배치 산출물(parquet) 차원 로드 시:  uv sync --extra parquet
 parquet = ["polars>=1.40.1"]
+# Spark Structured Streaming 소비자(Phase 2) 사용 시:  uv sync --extra spark
+# pyspark 는 local[*] 로 임베디드 실행되므로 별도 클러스터 불필요.
+spark = ["pyspark>=3.5,<4"]
 
 [project.scripts]
 # 콘솔 스크립트 진입점
 stream-data = "realtime_generator.main:main"
+# Phase 2 소비자: ecom.orders 를 읽어 1분 윈도우 매출/주문수 집계
+consume-orders = "realtime_generator.consumers.spark_orders_window:main"
 
 # 로컬 개발 전용 (런타임 의존성에는 포함되지 않음)
 [dependency-groups]
