@@ -136,6 +136,29 @@ docker compose up -d
 RUN_KAFKA_IT=1 uv run pytest tests/integration -q
 ```
 
+### 6. Kafka 소비자 — Spark 윈도우 집계 (Phase 2)
+
+생산한 스트림을 **읽어서** 실시간 집계하는 소비자입니다. `ecom.orders`를 이벤트타임 **1분 텀블링 윈도우**로 묶어 분당 매출·주문수를 콘솔에 출력하고, **워터마크**로 지각 데이터를 처리합니다. (pyspark가 `local[*]`로 임베디드 실행 — 별도 클러스터 불필요)
+
+```bash
+uv sync --extra spark                 # pyspark 설치 (Java 17+ 필요)
+docker compose up -d                  # 브로커
+uv run stream-data --sink kafka --duration 60 &   # 생산
+uv run consume-orders                 # 소비/집계 (Ctrl-C 종료)
+```
+
+출력 예시:
+```
++-------------------+-------------------+------+-----------+
+|window_start       |window_end         |orders|revenue_usd|
++-------------------+-------------------+------+-----------+
+|2025-01-01 00:00:00|2025-01-01 00:01:00|12    |2841.30    |
+|2025-01-01 00:01:00|2025-01-01 00:02:00|9     |1990.55    |
++-------------------+-------------------+------+-----------+
+```
+
+옵션: `--topic`, `--window`(예: `'1 minute'`), `--watermark`(예: `'2 minutes'`), `--bootstrap`, `--starting-offsets`. 배우는 개념: **이벤트타임 윈도우 · 워터마크/지각 데이터 · 상태 저장 스트리밍 집계**.
+
 ### 주요 옵션
 
 | 옵션 | 설명 |
@@ -168,12 +191,14 @@ uv run ruff check .   # 코드 스타일 점검
 - **Python 3.12** / **numpy**(샘플링) / **pyyaml**(설정)
 - (선택) **confluent-kafka** — Kafka 싱크
 - (선택) **polars** — 배치 Parquet 차원 로드
+- (선택) **pyspark** — Spark Structured Streaming 소비자 (Phase 2)
 - **uv** / **ruff** / **pytest**
 
 ## 로드맵
 
 - [x] 코어 엔진 + stdout/file 싱크 + 테스트
 - [x] Kafka 싱크 실연 + `docker-compose.yml`(로컬 브로커)
-- [ ] Spark Structured Streaming 소비 예제 (윈도우 집계)
+- [x] Spark Structured Streaming 소비 예제 (orders 1분 윈도우 집계 + 워터마크)
 - [ ] late/out-of-order 이벤트 주입 옵션
 - [ ] 트래픽 스파이크(플래시세일) 시나리오 주입
+- [ ] 소비자 확장: 실시간 전환율 / 인기 상품 Top-N
