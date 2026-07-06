@@ -22,6 +22,12 @@ funnel:
 dirty_data:
   null_rate_search: 0.10  # search 이벤트의 search_query NULL 비율
 
+# 지각(late) 이벤트 주입 — 페이로드의 이벤트 시각은 그대로 두고 방출 시각만 뒤로 미뤄
+# 이벤트타임이 뒤섞인(out-of-order) 스트림을 만든다. 소비자 워터마크 실험용.
+lateness:
+  late_rate: 0.0           # 지각시킬 레코드 비율(0~1). 0 = 비활성
+  late_max_delay_s: 120.0  # 지각 지연 상한(초). 지수분포 샘플을 이 값으로 절단
+
 # 출력 싱크
 sink:
   type: stdout            # stdout | file | kafka

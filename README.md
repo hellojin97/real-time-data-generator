@@ -159,6 +159,23 @@ uv run consume-orders                 # 소비/집계 (Ctrl-C 종료)
 
 옵션: `--topic`, `--window`(예: `'1 minute'`), `--watermark`(예: `'2 minutes'`), `--bootstrap`, `--starting-offsets`. 배우는 개념: **이벤트타임 윈도우 · 워터마크/지각 데이터 · 상태 저장 스트리밍 집계**.
 
+### 7. 지각(late) 이벤트 주입 — 워터마크 실험
+
+기본 스트림은 완벽하게 정렬되어 있어(이벤트 시각 = 도착 시각) 워터마크가 일하는 모습을 볼 수 없습니다. `--late-rate`를 주면 일부 레코드의 **방출(배달) 시각만** 뒤로 밀립니다 — 페이로드의 이벤트 시각(`order_ts` 등)은 그대로라, 이벤트타임 기준으로 뒤섞인(out-of-order) 스트림이 됩니다. 지연은 지수분포로 샘플링해 `--late-max-delay`(초)를 상한으로 절단합니다(대부분 짧게, 가끔 길게, 상한 보장).
+
+지각 추출은 별도 rng(seed+2)를 쓰므로, **같은 시드에서 지각 옵션을 켜고 꺼도 생성되는 레코드 내용은 동일**하고 배달 시각만 달라집니다. 지각 없는 실행이 정답지(ground truth)가 되어 워터마크가 버린 데이터를 정량 측정할 수 있습니다.
+
+```bash
+# 실험 A: 최대 지각(90초) < 워터마크(2분) → 지각 주문도 전부 집계에 반영된다
+uv run stream-data --sink kafka --duration 120 --late-rate 0.1 --late-max-delay 90 &
+uv run consume-orders --watermark '2 minutes'
+
+# 실험 B: 최대 지각(300초) > 워터마크(1분) → 일부 주문이 조용히 버려진다.
+# 같은 시드의 지각 없는 실행과 분당 매출을 비교하면 유실률이 나온다.
+uv run stream-data --sink kafka --duration 120 --late-rate 0.1 --late-max-delay 300 &
+uv run consume-orders --watermark '1 minute'
+```
+
 ### 주요 옵션
 
 | 옵션 | 설명 |
@@ -167,6 +184,8 @@ uv run consume-orders                 # 소비/집계 (Ctrl-C 종료)
 | `--sessions-per-sec` | 하루 평균 세션 도착률(초당). 시간대 가중치로 실제 발생률은 변동 |
 | `--conversion-rate` | 구매 전환율(0~1, 기본 0.04) |
 | `--max-events` / `--duration` | 종료 조건(둘 다 없으면 무한, Ctrl-C로 중단) |
+| `--late-rate` | 지각시킬 레코드 비율(0~1, 기본 0 = 비활성). 이벤트 시각은 그대로, 방출만 지연 |
+| `--late-max-delay` | 지각 지연 상한(초, 기본 120). 지수분포 샘플을 이 값으로 절단 |
 | `--simulated` | 가상 시계로 실제 대기 없이 즉시 생성(결정론·테스트·리플레이) |
 | `--seed` | RNG 시드. 같은 값이면 (시뮬레이션 모드에서) 항상 같은 스트림 |
 | `--dim-parquet` | 배치 산출물 경로에서 차원 로드 |
@@ -199,6 +218,6 @@ uv run ruff check .   # 코드 스타일 점검
 - [x] 코어 엔진 + stdout/file 싱크 + 테스트
 - [x] Kafka 싱크 실연 + `docker-compose.yml`(로컬 브로커)
 - [x] Spark Structured Streaming 소비 예제 (orders 1분 윈도우 집계 + 워터마크)
-- [ ] late/out-of-order 이벤트 주입 옵션
+- [x] late/out-of-order 이벤트 주입 옵션 (`--late-rate` / `--late-max-delay`)
 - [ ] 트래픽 스파이크(플래시세일) 시나리오 주입
 - [ ] 소비자 확장: 실시간 전환율 / 인기 상품 Top-N

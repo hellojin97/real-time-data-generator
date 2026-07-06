@@ -54,6 +54,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--null-rate-search", type=float, default=None, help="search_query NULL 비율")
     p.add_argument("--max-browse-events", type=int, default=None, help="브라우징 세션 이벤트 상한")
 
+    # 지각(late) 이벤트 주입
+    p.add_argument("--late-rate", type=float, default=None, help="지각시킬 레코드 비율(0~1, 기본: config)")
+    p.add_argument("--late-max-delay", type=float, default=None, help="지각 지연 상한(초, 기본: config)")
+
     # 싱크
     p.add_argument("--sink", default=None, choices=["stdout", "file", "kafka"], help="출력 싱크(기본: config)")
     p.add_argument("--out-dir", default=None, help="file 싱크 출력 디렉토리")
@@ -86,6 +90,10 @@ def main(argv: list[str] | None = None) -> None:
     sessions_per_sec = _resolve(args.sessions_per_sec, cfg["traffic"]["sessions_per_sec"])
     conversion_rate = _resolve(args.conversion_rate, cfg["funnel"]["conversion_rate"])
     null_rate_search = _resolve(args.null_rate_search, cfg["dirty_data"]["null_rate_search"])
+    # lateness 는 뒤에 추가된 섹션 — 구버전 커스텀 config 에도 동작하도록 .get 으로 읽는다
+    late_cfg = cfg.get("lateness", {})
+    late_rate = _resolve(args.late_rate, late_cfg.get("late_rate", 0.0))
+    late_max_delay_s = _resolve(args.late_max_delay, late_cfg.get("late_max_delay_s", 120.0))
 
     # 싱크 설정: CLI 오버라이드 반영
     sink_cfg = dict(cfg["sink"])
@@ -112,6 +120,8 @@ def main(argv: list[str] | None = None) -> None:
         conversion_rate=conversion_rate,
         null_rate_search=null_rate_search,
         max_browse_events=_resolve(args.max_browse_events, 8),
+        late_rate=late_rate,
+        late_max_delay_s=late_max_delay_s,
     )
 
     _log("=" * 60)
@@ -119,6 +129,8 @@ def main(argv: list[str] | None = None) -> None:
     _log(f"  users={pool.n_users:,}  products={pool.n_products:,}  seed={seed}")
     _log(f"  sessions/sec(avg)={sessions_per_sec}  conversion={conversion_rate}")
     _log(f"  sink={sink_cfg['type']}  clock={'simulated' if args.simulated else 'real'}")
+    if late_rate > 0:
+        _log(f"  late: rate={late_rate}  max_delay={late_max_delay_s}s")
     stop = f"max_events={args.max_events}" if args.max_events else (
         f"duration={args.duration}s" if args.duration else "infinite (Ctrl-C to stop)")
     _log(f"  stop: {stop}")
